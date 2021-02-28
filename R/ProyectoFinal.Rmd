@@ -1,0 +1,18 @@
+---
+title: "PROYECTO FINAL"
+author: "Eduardo Alejandro Arrieta Donato"
+output: html_document
+---
+
+Como parte final del módulo correspondiente a la materia Bioinformática del 4to semestre de la Licenciatura en Ciencias Genómicas impartido por Leonardo Collado Torres sobre análisis de resultados de ensayos de RNA-seq usando R, se presenta un proyecto de análisis que cumpla con las siguientes condiciones:
+
+* Con datos de algún estudio disponible vía recount3, hagan un análisis de expresión diferencial.
+* Incluyan al menos 3 gráficas en su reporte.
+
+Para este caso, se usarán los datos de un trabajo titulado "*Temporal patterning of apical progenitors and their daughter neurons in the developing neocortex*" obtenido vía `recount3` con su id_project `SRP158666`.
+
+
+```{r}
+
+```
+
