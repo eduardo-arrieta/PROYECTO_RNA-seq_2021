@@ -9,10 +9,274 @@ Como parte final del módulo correspondiente a la materia Bioinformática del 4t
 * Con datos de algún estudio disponible vía recount3, hagan un análisis de expresión diferencial.
 * Incluyan al menos 3 gráficas en su reporte.
 
-Para este caso, se usarán los datos de un trabajo titulado "*Temporal patterning of apical progenitors and their daughter neurons in the developing neocortex*" obtenido vía `recount3` con su id_project `SRP158666`.
+Para este caso, se usarán los datos de un trabajo titulado "*Single cell transcriptional dynamics of flavivirus infection*" obtenido vía `recount3` con su id_project `SRP132726`.
+
+Dicho trabajo consiste en una serie de ensayos viscRNA-Seq (RNA-Seq de célula única que incluye virus), un enfoque para sondear el transcriptoma del huésped junto con el RNA viral intracelular a nivel de célula única. Se aplica viscRNA-Seq para monitorear la infección por el virus del dengue y el Zika en células cultivadas,
+
+Por lo que se busca en este proyecto obervar aquellos genes que cuenten con una expresión alta durante la infección para dar pauta a futuras investigaciones.
+
+```{r message=FALSE}
+library("recount3")
+```
+
+```{r}
+# Primero debemos obtener los proyectos relacionados al humano
+human_projects <- available_projects(organism = "human")
+```
+
+```{r message=FALSE}
+# Despues se obtiene el experimento con su id
+proj_info <- subset(
+    human_projects,
+    project == "SRP132726" & project_type == "data_sources"
+)
+
+rse_gene_SRP132726 <- create_rse(proj_info)
+```
+```{r}
+rse_gene_SRP132726
+# El experimento cuenta con cuentas crudas de lecturas
+```
+```{r}
+assay(rse_gene_SRP132726, "counts") <- compute_read_counts(rse_gene_SRP132726)
+# Por lo que hay que contabilizarlas para el estudio
+rse_gene_SRP132726
+```
+```{r}
+rse_gene_SRP132726$sra.sample_attributes[1:5]
+# La parte |virus-qpcr;;...| no existe para todas las muestras
+# Quitando esta opción normalizamos la variable quitando ruido
+```
+
+```{r}
+# Sustitucion
+rse_gene_SRP132726$sra.sample_attributes <- gsub("virus-qpcr;;[0-9.]+\\|", "", rse_gene_SRP132726$sra.sample_attributes)
+
+rse_gene_SRP132726$sra.sample_attributes[1:5]
+```
 
 
 ```{r}
+# Expandimos el objeto
+rse_gene_SRP132726 <- expand_sra_attributes(rse_gene_SRP132726)
+rse_gene_SRP132726
+```
+
+```{r}
+# Observados las variables con las que podemos trabajar
+colData(rse_gene_SRP132726)[
+    ,
+    grepl("^sra_attribute", colnames(colData(rse_gene_SRP132726)))
+]
+```
+```{r}
+table(rse_gene_SRP132726$sra_attribute.virus)
+# Se encontraron 1356 muestras de dengue y 904 de zika
+
+# Las varibles se encuntran mal tipeadas por lo que se cambian a numero o factor
+rse_gene_SRP132726$sra_attribute.moi <- as.numeric(rse_gene_SRP132726$sra_attribute.moi)
+
+rse_gene_SRP132726$sra_attribute.n_dengue_molecules <- as.numeric(rse_gene_SRP132726$sra_attribute.n_dengue_molecules)
+rse_gene_SRP132726$sra_attribute.virus <- factor(rse_gene_SRP132726$sra_attribute.virus)
+
+# Observamos un resumen de nuestros datos
+summary(as.data.frame(colData(rse_gene_SRP132726)[
+    ,
+    grepl("^sra_attribute.[moi|n_dengue_molecules|virus]", colnames(colData(rse_gene_SRP132726)))
+]))
+# Aqui vemos que exite la columna MOI, que significa Multiplicity of Infection
+# Esta se mide por el número de partículas virales expuestas a una célula
+```
+```{r}
+# Al ver la cantidad de moleculas de dengue en las muestras nos revela que 
+# se reportó que algunas muestras a las que se les aplico la infección no 
+# mostraron moleculas del virus
+table(rse_gene_SRP132726$sra_attribute.n_dengue_molecules != 0)
+```
+
+```{r}
+# Obtenemos la distición de las muestras con dende y las que no
+rse_gene_SRP132726$zika <- factor(ifelse(rse_gene_SRP132726$sra_attribute.n_dengue_molecules == 0, "Zika", "Dengue"))
+table(rse_gene_SRP132726$zika)
+```
+```{r}
+# Obtenemos la varible que nos dice la calidad del conteo que sale de la 
+# division de la cantidad de lecturas asignadas a un gen sobre las totales
+rse_gene_SRP132726$assigned_gene_prop <- rse_gene_SRP132726$recount_qc.gene_fc_count_all.assigned / rse_gene_SRP132726$recount_qc.gene_fc_count_all.total
+summary(rse_gene_SRP132726$assigned_gene_prop)
+```
+```{r}
+## Hm... veamos si hay una diferencia entre los grupos
+with(colData(rse_gene_SRP132726), tapply(assigned_gene_prop, zika, summary))
+```
+```{r}
+# Tanto la proporcion de lecturas asignadas en general como para cada grupo 
+# indican que hay una gran brecha entre el minimo y el primer cuartil como 
+# entre el maximo con el 3er cuartil, por lo que se reduciran con un filtro
+
+# Se hace un respaldo por seguridad
+rse_gene_SRP132726_respaldo <- rse_gene_SRP132726
+
+## Histograma explorativo
+hist(rse_gene_SRP132726$assigned_gene_prop)
+```
+
+Luce como una distribución nomrla con orillas muy alargas.
+```{r}
+# Aplicacion de los filtros
+rse_gene_SRP132726 <- rse_gene_SRP132726[, rse_gene_SRP132726$assigned_gene_prop > 0.3]
+rse_gene_SRP132726 <- rse_gene_SRP132726[, rse_gene_SRP132726$assigned_gene_prop < 0.75]
+
+# Resultados
+hist(rse_gene_SRP132726$assigned_gene_prop)
+```
+
+Las orillas se lograron reducir haciendo que nuestros datos estén menos dispersos.
+```{r}
+# Observamos los resultados 
+summary(rse_gene_SRP132726$assigned_gene_prop)
+```
+```{r}
+with(colData(rse_gene_SRP132726), tapply(assigned_gene_prop, zika, summary))
+# Se encuntran mas cercanos
+```
+```{r message=FALSE}
+library("ggplot2")
+```
+
+
+```{r}
+# Ploteamos las diferencias entre calidades de ambos grupos
+ggplot(as.data.frame(colData(rse_gene_SRP132726)), aes(y = assigned_gene_prop, x = zika)) +
+    geom_boxplot() +
+    theme_bw(base_size = 20) +
+    ylab("Assigned Gene Prop") +
+    xlab("Virus")
 
 ```
 
+LAmbos grupos de datos tiene una proporción media de alredor del 55 por ciento. 
+
+```{r message=FALSE}
+library("edgeR")
+# Ahora resolvamos el composition bias para obervar la expresion diferencial
+dge <- DGEList(
+    counts = assay(rse_gene_SRP132726, "counts"),
+    genes = rowData(rse_gene_SRP132726)
+)
+dge <- calcNormFactors(dge)
+```
+
+```{r}
+# Genramos el modelo para este proyecto
+mod <- model.matrix(~ zika 
+                    + sra_attribute.moi 
+                    + sra_attribute.n_dengue_molecules 
+                    + assigned_gene_prop,
+    data = colData(rse_gene_SRP132726)
+)
+```
+
+
+```{r}
+# Mostramos los coeficientes
+colnames(mod)
+```
+
+```{r message=FALSE}
+library("limma")
+```
+
+
+```{r}
+# Gneramos un ploteo de la regresion linea de la expresion usando el modelo 
+vGene <- voom(dge, mod, plot = TRUE)
+```
+
+Observamos que existe una enorme cantidad de genes que se expresan muy poco o cantidades negativas a lo usual pero que estan muy cercanos al modelo de la regresión lineal, por el otro lado, exiten pocos genes que tienen una alta expresión con muchas desviasiones estandar.
+
+```{r}
+# Ahora generamos la tabla para el plteo del volcan y el heatmap
+eb_results <- eBayes(lmFit(vGene))
+
+de_results <- topTable(
+    eb_results,
+    coef = 2,
+    number = nrow(rse_gene_SRP132726),
+    sort.by = "none"
+)
+```
+
+```{r}
+# De este ploteo sacamos 4 genes con mayor expresión
+volcanoplot(eb_results, coef = 2, highlight = 10, names = de_results$gene_name)
+# Se seleccionaron 3 con valores de x negativa y uno de valor positivo
+```
+
+Nos permite observar con mejor presición aquellos genes que tienen una expresión anormal.
+
+```{r}
+# Se muestran los datos de estos genes
+de_results[de_results$gene_name %in% c("DDIT3", "HERPUD1", "CTH", "HSPA8"), ]
+# ENSG00000175197.11, ENSG00000051108.14, ENSG00000116761.11, ENSG00000109971.13
+```
+
+```{r}
+## Extraer valores de los genes de interés, podemos trabajar con 10
+exprs_heatmap <- vGene$E[rank(de_results$adj.P.Val) <= 10, ]
+
+## Creemos una tabla con información de las muestras
+## y con nombres de columnas más amigables
+df <- as.data.frame(colData(rse_gene_SRP132726)[, c("zika", "sra_attribute.moi",
+                                                    "sra_attribute.n_dengue_molecules")])
+colnames(df) <- c("Virus", "MOI", "MoleDengue")
+
+# Obtenemos y aplicamos nombres de los genes
+rownames(exprs_heatmap) <- rowRanges(rse_gene_SRP132726)$gene_name[
+  match(rownames(exprs_heatmap), rowRanges(rse_gene_SRP132726)$gene_id)
+]
+```
+
+
+```{r message=FALSE}
+library("pheatmap")
+```
+
+
+```{r}
+# Ploteo del heatmap
+pheatmap(
+    exprs_heatmap,
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    show_rownames = TRUE,
+    show_colnames = FALSE,
+    annotation_col = df
+)
+```
+
+El gen que resulata más es el HSPA8, el cual tiene una gran expresión a lo largo de las muestras, sobre todo en aquellas que son parte del segundo grupo formado por el dendrograma superior. Los otros genes antes mencionados también resaltan pero tener una expresión especialmente baja.
+
+```{r eval=FALSE}
+# Como ultimo paso se decidio sacar en plots la expresion de los gens antes mencionados
+library(iSEE)
+```
+
+Por problemas con la exportacion del rmd a html se dejaran los vinculos a las imagnes en pdf depositadas en este mismo respositorio
+
+* [CTH](https://github.com/eduardo-arrieta/PROYECTO_RNA-seq_2021/blob/master/figuras/CTH.pdf)
+* [DDIT3](https://github.com/eduardo-arrieta/PROYECTO_RNA-seq_2021/blob/master/figuras/DDIT3.pdf)
+* [HERPUD1](https://github.com/eduardo-arrieta/PROYECTO_RNA-seq_2021/blob/master/figuras/HERPUD1.pdf)
+* [HSPA8](https://github.com/eduardo-arrieta/PROYECTO_RNA-seq_2021/blob/master/figuras/HSPA8.pdf)
+
+Los figuras estan dividas en columnas donde cada una es un grupo de infección y los colores representan la calidad de las lecturas
+
+CTH: Cistationina gamma-liasa, cataliza el último paso en la vía de trans-sulfuración de metionina a cisteína.
+
+DDIT3: Proteína del transcrito 3 inducible por daños en el ADN, factor de transcripción multifuncional en la respuesta al estrés del retículo endoplásmico. Desempeña un papel esencial en la respuesta a una amplia variedad de tensiones celulares e induce la detención del ciclo celular y la apoptosis en respuesta al estrés ER
+
+HERPUD1: Proteína miembro 1 del dominio similar a ubiquitina residente en retículo endoplásmico sensible a homocisteína, Componente del sistema de control de calidad del retículo endoplásmico (ERQC) también llamado degradación asociada a ER (ERAD) involucrado en la degradación dependiente de ubiquitina de proteínas del retículo endoplásmico mal plegadas.
+
+HSPA8: Chaperona molecular implicada en una amplia variedad de procesos celulares, incluida la protección del proteoma del estrés, el plegamiento y transporte de polipéptidos recién sintetizados, la activación de la proteólisis de proteínas mal plegadas y la formación y disociación de complejos proteicos. Desempeña un papel fundamental en el sistema de control de calidad de las proteínas, asegurando el plegado correcto de las proteínas, el plegado de proteínas mal plegadas y controlando la orientación de las proteínas para su posterior degradación.
+
+Como era de esperarse, el conteo de la expresión de HSPA8 se encontró en gran cantidad, pero, a diferencia de las anteriores tres, esta se manifestó más en infecciones con el segundo grupo, el sika, por lo que da una pista a que las interacción huesped-hospedero que se dan con este virus están mas relacinados al este gen, que junto DDIT3 es un importante agente en la regulación. 
